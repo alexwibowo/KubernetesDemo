@@ -155,3 +155,160 @@ mongodb        1       0  0 11:12 ?        00:00:03 mongod --auth --bind_ip_all
 root         125       0  0 11:18 pts/0    00:00:00 /bin/bash
 root         138     125  0 11:19 pts/0    00:00:00 ps -afeww
 ```
+
+## MongoDB Service
+
+Now, the way we are going to hook up our front end (MongoExpress) with MongoDB is through an internal service.
+So lets create that inside our mongodb-deployment.yml. 
+
+Note that a kubernetes YML file can contain more than one component. In this case, it is quite common to create service in the same YML file as the deployment (as they are related to each other).
+
+Also, our selector (```app: mongodb```) in the service:
+```
+spec:
+  selector:
+    app: mongodb
+```
+is referring to the label that we have chosen in our mongodb-deployment.yml:
+
+```
+metadata:
+  name: mongodb-deployment
+  labels:
+    app: mongodb
+```
+
+with this, lets apply our changes.
+```
+➜  mongoexpress-kubernetes git:(master) kubectl apply -f mongodb-deployment.yml
+deployment.apps/mongodb-deployment unchanged
+service/mongodb-service created
+```
+
+lets check our service.
+```
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl describe service mongodb-service
+Name:              mongodb-service
+Namespace:         default
+Labels:            <none>
+Annotations:       <none>
+Selector:          app=mongodb
+Type:              ClusterIP
+IP:                10.96.1.244
+Port:              <unset>  27017/TCP
+TargetPort:        27017/TCP
+Endpoints:         172.17.0.2:27017
+Session Affinity:  None
+Events:            <none>
+
+```
+
+Great! Our service is connected to our container (172.17.0.2 - remember, this is the IP of our container when we describe our deployment earlier). 
+
+With this, we are done with the backend!
+
+# MongoExpress Deployment
+
+Now we are going to add a front end to our MongoDB backend. First thing first, lets create the deployment for mongo express. We are creating ```mongoexpress-deployment.yml```. 
+
+First thing first, lets go to Dockerhub to see the image for mongo-express (https://hub.docker.com/_/mongo-express). A few things :
+* mongo express is listening on port 8081
+* We need to pass in ME_CONFIG_MONGODB_ADMINUSERNAME and ME_CONFIG_MONGODB_ADMINPASSWORD for the username & password 
+* We need to pass in ME_CONFIG_MONGODB_SERVER to point to the DB URL>
+
+Now, for the username & password, we can just use the secret we created earlier. So similar to our MongoDB deployment, with the caveat of different environment variable names:
+```
+    - name: ME_CONFIG_MONGODB_ADMINUSERNAME
+      valueFrom:
+        secretKeyRef:
+        name: mongodb-secret
+        key: mongodb-username
+    - name: ME_CONFIG_MONGODB_ADMINPASSWORD
+      valueFrom:              
+        secretKeyRef:
+        name: mongodb-secret
+        key: mongodb-password
+```
+
+For the DB URL though, as it is not so sensitive, we are going to create configMap for this: ```mongodb-configmap.yml```.
+
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-configmap
+data:
+  database-url: mongodb-service
+```
+
+One important thing here - notice that our database URL is actually referring to ```mongodb-service```. What is this? It is none other than __the name of our mongodb internal service__! (the service we created earlier for our mongodb deployment). This is a very important thing. We dont refer to IP address ! We refer to the name of the service. It is kind of like a DNS name.
+
+
+Now that we have this config map, we can refer it in our mongoexpress deployment:
+
+```
+- name: ME_CONFIG_MONGODB_SERVER
+    valueFrom:
+    configMapKeyRef:
+    name: mongodb-configmap
+    key: database-url 
+```
+
+Note that ```mongodb-configmap``` is the name of our configmap.
+
+With these, lets deploy our new stuffs!
+
+```
+➜  mongoexpress-kubernetes git:(master) kubectl apply -f mongodb-configmap.yml 
+configmap/mongodb-configmap created
+
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl get configmap -o wide
+NAME                DATA   AGE
+kube-root-ca.crt    1      9d
+mongodb-configmap   1      2m48s
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl describe configmap mongodb-configmap
+Name:         mongodb-configmap
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+
+Data
+====
+database-url:
+----
+mongodb-service
+Events:  <none>
+```
+
+and deploy our new shiny mongoexpress deployment:
+```
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl apply -f mongoexpress-deployment.yml 
+deployment.apps/mongoexpress-deployment created
+
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl get pod
+NAME                                       READY   STATUS    RESTARTS   AGE
+mongodb-deployment-fd7bd6dc-bdt8c          1/1     Running   0          37m
+mongoexpress-deployment-5b85d8f894-pccw8   1/1     Running   0          20s
+
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl logs mongoexpress-deployment-5b85d8f894-pccw8
+Waiting for mongodb-service:27017...
+Welcome to mongo-express
+------------------------
+
+
+Mongo Express server listening at http://0.0.0.0:8081
+Server is open to allow connections from anyone (0.0.0.0)
+basicAuth credentials are "admin:pass", it is recommended you change this in your config.js!
+Database connected
+Admin Database connected
+```
+
+
+## MongoExpress Service
+
+The final thing is to make an external service, so that our mongo express is accessible from outside.
+Again, we can just add it in the same deployment file as our mongo express deployment.
+
+```
+
+```
