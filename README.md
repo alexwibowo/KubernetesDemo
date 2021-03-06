@@ -1,14 +1,30 @@
-# MongoDB Deployment 
+# Kubernetes Demonstration
 
-Our first step is to create a deployment for MongoDB (mongodb-deployment.yml). Here I'm using the latest version of mongoDB. 
+This project demonstrates a simple kubernetes cluster. The components being used are:
+* Deployment
+* Secret
+* Service
+* ConfigMap
 
+We also have two _Deployments_:
+* Backend MongoDB - should only be accessible internally
+* Frontend MongoExpress - should be accessible externally 
+
+The username & passwords for accessing the backend will be stored in _Secret_, whereas the DB URL is going to be stored in the _ConfigMap_.
+
+Furthermore, we are going to create an internal service for the backend MongoDB, and external service for MongoExpress.
+
+
+## MongoDB Deployment 
+
+Our first step is to create a deployment for MongoDB (```mongodb-deployment.yml```). Here I'm using the latest version of MongoDB. 
+å
 Looking at dockerhub (https://hub.docker.com/_/mongo), the default port for mongodb is 27017. Furthermore, it needs two environment variables:
 * MONGO_INITDB_ROOT_USERNAME
 * MONGO_INITDB_ROOT_PASSWORD
 
-Since these two are sensitive information, I have created them as Kubernetes Secret (mongodb-secret.yml). Then I can reference them in the former mongodb-deployment.yml.
+Since these two are sensitive information, I have created them as Kubernetes _Secret_ (```mongodb-secret.yml```). Then I can reference them in the former ```mongodb-deployment.yml```.
 
-e.g.:
 ```
 env:
     - name: MONGO_INITDB_ROOT_USERNAME
@@ -156,7 +172,7 @@ root         125       0  0 11:18 pts/0    00:00:00 /bin/bash
 root         138     125  0 11:19 pts/0    00:00:00 ps -afeww
 ```
 
-## MongoDB Service
+### MongoDB (internal) Service
 
 Now, the way we are going to hook up our front end (MongoExpress) with MongoDB is through an internal service.
 So lets create that inside our mongodb-deployment.yml. 
@@ -207,9 +223,9 @@ Great! Our service is connected to our container (172.17.0.2 - remember, this is
 
 With this, we are done with the backend!
 
-# MongoExpress Deployment
+## MongoExpress Deployment
 
-Now we are going to add a front end to our MongoDB backend. First thing first, lets create the deployment for mongo express. We are creating ```mongoexpress-deployment.yml```. 
+Now we are going to add a front end to our MongoDB backend. First thing first, lets create the deployment for mongo express (```mongoexpress-deployment.yml```). 
 
 First thing first, lets go to Dockerhub to see the image for mongo-express (https://hub.docker.com/_/mongo-express). A few things :
 * mongo express is listening on port 8081
@@ -304,11 +320,55 @@ Admin Database connected
 ```
 
 
-## MongoExpress Service
+### MongoExpress (external) Service
 
 The final thing is to make an external service, so that our mongo express is accessible from outside.
 Again, we can just add it in the same deployment file as our mongo express deployment.
 
+A few notes:
+* To make the service as external service, we add ```type: LoadBalancer```
+* We also need to add ```nodePort: 30000```, to say that we want to make it available on port 30000 on the __node__
 ```
+ type: LoadBalancer
+  ports:
+  - protocol: TCP
+    port: 8081
+    targetPort: 8081
+    nodePort: 30000
 
 ```
+
+lets apply it!
+```
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl apply -f mongoexpress-deployment.yml 
+deployment.apps/mongoexpress-deployment unchanged
+service/mongoexpress-service created
+
+➜  mongoexpress-kubernetes git:(master) ✗ kubectl get service
+NAME                   TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)          AGE
+kubernetes             ClusterIP      10.96.0.1      <none>        443/TCP          9d
+mongodb-service        ClusterIP      10.96.1.244    <none>        27017/TCP        35m
+mongoexpress-service   LoadBalancer   10.105.95.41   <pending>     8081:30000/TCP   2m18s
+```
+
+See that external IP is ___pending___ because we are running on minikube. But dont worry! We can still test it regardless.
+
+```
+➜  mongoexpress-kubernetes git:(master) ✗ minikube service mongoexpress-service
+|-----------|----------------------|-------------|---------------------------|
+| NAMESPACE |         NAME         | TARGET PORT |            URL            |
+|-----------|----------------------|-------------|---------------------------|
+| default   | mongoexpress-service |        8081 | http://192.168.49.2:30000 |
+|-----------|----------------------|-------------|---------------------------|
+🏃  Starting tunnel for service mongoexpress-service.
+|-----------|----------------------|-------------|------------------------|
+| NAMESPACE |         NAME         | TARGET PORT |          URL           |
+|-----------|----------------------|-------------|------------------------|
+| default   | mongoexpress-service |             | http://127.0.0.1:62285 |
+|-----------|----------------------|-------------|------------------------|
+🎉  Opening service default/mongoexpress-service in default browser...
+❗  Because you are using a Docker driver on darwin, the terminal needs to be open to run it.
+```
+
+This should open a browser. And with that, we are done!
+
